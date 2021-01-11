@@ -37,12 +37,8 @@ pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl
 
     println!("{:?}", row);
 
-    // Ok(reply::json(&"yo".to_string()))
-    //
     use std::str::FromStr;
     let location = Uri::from_str(&format!("/answer/{}", "23")).unwrap();
-
-    // Ok(redirect::(Uri::from_string("/answer")))
 
     Ok(redirect(location))
 }
