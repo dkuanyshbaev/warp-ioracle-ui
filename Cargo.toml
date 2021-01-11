@@ -1,0 +1,16 @@
+[package]
+name = "ioracle-ui"
+version = "0.1.0"
+authors = ["Denis K. <konsistentsi@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+log = "0.4"
+pretty_env_logger = "0.4"
+tokio = { version = "0.2", features = ["full"] }
+warp = "0.2.5"
+serde = "1.0"
+serde_derive = "1.0"
+serde_json = "1.0"
+sqlx = { version = "0.4.2", features = ["sqlite", "runtime-tokio-rustls"] }
+askama = "0.10.5"
