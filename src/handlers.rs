@@ -1,11 +1,12 @@
-use crate::errors;
-use crate::models;
+use crate::{errors, models};
 use askama::Template;
 use sqlx::sqlite::SqlitePool;
-// use tokio::io::AsyncWriteExt;
-use tokio::io::{self, AsyncWriteExt};
+use tokio::io::ErrorKind;
 use tokio::net::{UnixListener, UnixStream};
 use warp::{http::Uri, redirect, reject, reply, Rejection, Reply};
+
+const IORACLE_SEND: &str = "/tmp/ioracle.send";
+const IORACLE_RETURN: &str = "/tmp/ioracle.return";
 
 #[derive(Template)]
 #[template(path = "index.html")]
@@ -27,29 +28,18 @@ pub async fn index() -> Result<impl Reply, Rejection> {
 }
 
 pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl Reply, Rejection> {
-    // TODO: send message to core & wait for response
-
-    println!("----------- {:?}", question);
-
-    // --------------------------------------------------------------
-
-    println!("send to gate");
-
-    if let Ok(mut stream) = UnixStream::connect("/tmp/ioracle.sock").await {
+    if let Ok(stream) = UnixStream::connect(IORACLE_SEND).await {
         loop {
-            // Wait for the socket to be writable
-            if let Err(e) = stream.writable().await {
-                println!("{:?}", e);
+            if let Err(_) = stream.writable().await {
                 break;
             };
 
-            // Try to write data, this may still fail with `WouldBlock`
-            // if the readiness event is a false positive.
-            match stream.try_write(b"hello world") {
-                Ok(n) => {
+            // this may still fail with `WouldBlock` if the readiness event is a false positive
+            match stream.try_write(b"read") {
+                Ok(_) => {
                     break;
                 }
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                     continue;
                 }
                 Err(e) => {
@@ -59,18 +49,7 @@ pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl
                 }
             }
         }
-        // if let Err(e) = stream.write_all(b"read") {
-        //     println!("{:?}", e);
-        // };
     };
-
-    // let mut listener = UnixListener::bind("/tmp/ioracle.out").unwrap();
-
-    // if let Ok(mut stream) = UnixListener::bind("/tmp/ioracle.in") {
-    //     if let Err(e) = stream.write_all(b"read") {
-    //         println!("{:?}", e);
-    //     };
-    // };
 
     // --------------------------------------------------------------
 
@@ -84,6 +63,9 @@ pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl
         });
 
     println!("{:?}", row);
+    println!("{:?}", question);
+
+    // --------------------------------------------------------------
 
     use std::str::FromStr;
     let location = Uri::from_str(&format!("/answer/{}", "23")).unwrap();
