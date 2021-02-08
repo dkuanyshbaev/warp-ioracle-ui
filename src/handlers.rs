@@ -1,6 +1,7 @@
 use crate::{errors, models};
 use askama::Template;
 use sqlx::sqlite::SqlitePool;
+use std::{str, str::FromStr};
 use tokio::io::ErrorKind;
 use tokio::net::{UnixListener, UnixStream};
 use warp::{http::Uri, redirect, reject, reply, Rejection, Reply};
@@ -31,113 +32,64 @@ pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl
     if let Ok(stream) = UnixStream::connect(IORACLE_SEND).await {
         loop {
             if stream.writable().await.is_err() {
-                break;
+                continue;
             }
 
             match stream.try_write(b"read") {
-                Ok(_) => {
-                    // if let Err(e) = stream.shutdown().await {
-                    //     println!("{:?}", e);
-                    // };
+                Ok(_) => break,
 
-                    break;
-                }
                 // will fail with `WouldBlock` if the readiness event is a false positive
                 Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
                     continue;
                 }
-                Err(e) => {
-                    // return Err(e.into());
-                    println!("{:?}", e);
+
+                Err(_) => {
+                    // return Err(?)
+                    println!("Can't write to SEND socket");
                     break;
                 }
             }
         }
-    };
-
-    // use std::fs;
-    use std::path::Path;
-    let socket = Path::new(IORACLE_RETURN);
-    // Delete old socket if necessary
-    if socket.exists() {
-        if let Err(error) = std::fs::remove_file(IORACLE_RETURN) {
-            println!("{}", error);
-            std::process::exit(1);
-        };
     }
 
-    // let mut result = "".to_string();
-    let mut buf = [0; 12];
+    let mut location = Uri::from_str("/").unwrap();
 
     if let Ok(listener) = UnixListener::bind(IORACLE_RETURN) {
-        'outer: loop {
-            match listener.accept().await {
-                Ok((stream, _addr)) => {
-                    println!("new client!");
+        'connection: loop {
+            if let Ok((stream, _)) = listener.accept().await {
+                loop {
+                    if stream.readable().await.is_err() {
+                        continue;
+                    }
 
-                    loop {
-                        if stream.readable().await.is_err() {
-                            break;
+                    let mut result = [0; 12];
+
+                    match stream.try_read(&mut result) {
+                        Ok(0) => continue,
+
+                        Ok(_) => {
+                            if let Ok(result) = std::str::from_utf8(&result) {
+                                if let Some(uuid) = models::save(db, question, result) {
+                                    location = Uri::from_str(&format!("/answer/{}", uuid)).unwrap();
+                                }
+                            }
+                            break 'connection;
                         }
 
-                        // Creating the buffer **after** the `await` prevents it from
-                        // being stored in the async task.
-                        // let mut buf = [0; 12];
+                        // will fail with `WouldBlock` if the readiness event is a false positive
+                        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+                            continue;
+                        }
 
-                        match stream.try_read(&mut buf) {
-                            // Ok(0) => break,
-                            Ok(0) => continue,
-                            Ok(_n) => {
-                                // if let Ok(r) = std::str::from_utf8(&buf) {
-                                //     result = r.to_string();
-                                //     break;
-                                // }
-                                break 'outer;
-                            }
-                            // will fail with `WouldBlock` if the readiness event is a false positive
-                            Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
-                                continue;
-                            }
-                            Err(e) => {
-                                // return Err(e.into());
-                                println!("{:?}", e);
-                                break;
-                            }
+                        Err(_) => {
+                            println!("Can't read from RETURN socket");
+                            break 'connection;
                         }
                     }
                 }
-                Err(e) => {
-                    println!("connection failed! {:?}", e);
-                }
             }
         }
-    };
-
-    // --------------------------------------------------------------
-
-    if let Ok(r) = std::str::from_utf8(&buf) {
-        println!("result: {}", r);
     }
-
-    // --------------------------------------------------------------
-
-    // TODO: save question & result, then redirect
-    let row: (i64,) = sqlx::query_as("SELECT $1")
-        .bind(150_i64)
-        .fetch_one(&db)
-        .await
-        .unwrap_or_else(|err| {
-            println!("Test: {}", err);
-            std::process::exit(1);
-        });
-
-    println!("{:?}", row);
-    println!("{:?}", question);
-
-    // --------------------------------------------------------------
-
-    use std::str::FromStr;
-    let location = Uri::from_str(&format!("/answer/{}", "23")).unwrap();
 
     Ok(redirect(location))
 }

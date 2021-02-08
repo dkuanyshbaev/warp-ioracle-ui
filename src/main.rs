@@ -4,9 +4,11 @@ mod handlers;
 mod models;
 
 use sqlx::sqlite::SqlitePool;
-use std::{env, process};
+use std::path::Path;
+use std::{env, fs, process};
 use warp::Filter;
 
+const IORACLE_RETURN: &str = "/tmp/ioracle.return";
 const DB: &str = "./db/ioracle.db";
 
 #[tokio::main]
@@ -20,6 +22,14 @@ async fn main() {
         println!("Can't connect to DB!");
         process::exit(1);
     });
+
+    let socket = Path::new(IORACLE_RETURN);
+    if socket.exists() {
+        if fs::remove_file(IORACLE_RETURN).is_err() {
+            println!("Can't remove socket!");
+            process::exit(1);
+        }
+    }
 
     let routes = filters::ioracle(db)
         .with(warp::log("ioracle"))
