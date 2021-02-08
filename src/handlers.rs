@@ -1,7 +1,7 @@
 use crate::{errors, models};
 use askama::Template;
 use sqlx::sqlite::SqlitePool;
-use tokio::io::{AsyncWriteExt, ErrorKind};
+use tokio::io::ErrorKind;
 use tokio::net::{UnixListener, UnixStream};
 use warp::{http::Uri, redirect, reject, reply, Rejection, Reply};
 
@@ -28,19 +28,17 @@ pub async fn index() -> Result<impl Reply, Rejection> {
 }
 
 pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl Reply, Rejection> {
-    if let Ok(mut stream) = UnixStream::connect(IORACLE_SEND).await {
+    if let Ok(stream) = UnixStream::connect(IORACLE_SEND).await {
         loop {
-            // check readiness
-            if let Err(_) = stream.writable().await {
-                continue;
-            };
+            if stream.writable().await.is_err() {
+                break;
+            }
 
             match stream.try_write(b"read") {
                 Ok(_) => {
-                    println!("--------------->>>>>>>>> succ write");
-                    if let Err(e) = stream.shutdown().await {
-                        println!("{:?}", e);
-                    };
+                    // if let Err(e) = stream.shutdown().await {
+                    //     println!("{:?}", e);
+                    // };
 
                     break;
                 }
@@ -68,34 +66,33 @@ pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl
         };
     }
 
-    println!("1");
+    // let mut result = "".to_string();
+    let mut buf = [0; 12];
+
     if let Ok(listener) = UnixListener::bind(IORACLE_RETURN) {
-        println!("2");
-        loop {
+        'outer: loop {
             match listener.accept().await {
                 Ok((stream, _addr)) => {
                     println!("new client!");
+
                     loop {
-                        // check readiness
-                        if let Err(_) = stream.readable().await {
-                            continue;
-                        };
+                        if stream.readable().await.is_err() {
+                            break;
+                        }
 
                         // Creating the buffer **after** the `await` prevents it from
                         // being stored in the async task.
-                        let mut buf = [0; 13];
+                        // let mut buf = [0; 12];
 
                         match stream.try_read(&mut buf) {
                             // Ok(0) => break,
                             Ok(0) => continue,
-                            Ok(n) => {
-                                println!(">>>>>>>>>>>>>>>>>>> read {} bytes {:?}", n, buf);
-                                let s = match std::str::from_utf8(&buf) {
-                                    Ok(v) => v,
-                                    Err(e) => panic!("Invalid UTF-8 sequence: {}", e),
-                                };
-
-                                println!("result: {}", s);
+                            Ok(_n) => {
+                                // if let Ok(r) = std::str::from_utf8(&buf) {
+                                //     result = r.to_string();
+                                //     break;
+                                // }
+                                break 'outer;
                             }
                             // will fail with `WouldBlock` if the readiness event is a false positive
                             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -114,22 +111,17 @@ pub async fn question(question: models::Question, db: SqlitePool) -> Result<impl
                 }
             }
         }
-
-        // let mut incoming = listener.incoming();
-        // while let Some(stream) = listener.next().await {
-        //     match stream {
-        //         Ok(stream) => {
-        //             println!("new client!");
-        //         }
-        //         Err(e) => {
-        //             println!("connection failed!");
-        //         }
-        //     }
-        // }
     };
 
     // --------------------------------------------------------------
 
+    if let Ok(r) = std::str::from_utf8(&buf) {
+        println!("result: {}", r);
+    }
+
+    // --------------------------------------------------------------
+
+    // TODO: save question & result, then redirect
     let row: (i64,) = sqlx::query_as("SELECT $1")
         .bind(150_i64)
         .fetch_one(&db)
